@@ -21,10 +21,6 @@ setup(
     entry_points={
         'console_scripts': [
             'first_step = ros2_project_sc22rak.first_step:main',
-            'second_step = ros2_project_sc22rak.second_step:main',
-            'third_step = ros2_project_sc22rak.third_step:main',
-            'fourth_step = ros2_project_sc22rak.fourth_step:main',
-            'go_to_pose = ros2_project_sc22rak.go_to_specific_point_on_map:main',
         ],
     },
 )

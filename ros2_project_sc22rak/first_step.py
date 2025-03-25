@@ -136,7 +136,7 @@ class GoToPose(Node):
                 if blue_contours:
                     largest_blue_area = cv2.contourArea(max(blue_contours, key=cv2.contourArea))
 
-                    if largest_blue_area > 1000:  
+                    if largest_blue_area > 100:  
                         print("Blue object is almost 1 meter close.")
                         self.stop()
                         self.moving = False  
@@ -152,19 +152,25 @@ class GoToPose(Node):
 
 
 def main(args=None):
-
     def signal_handler(sig, frame):
-    rclpy.shutdown()
-    # Instantiate your class
-    # And rclpy.init the entire node
+        rclpy.shutdown()
 
     rclpy.init(args=args)
     go_to_pose = GoToPose()
 
-    go_to_pose.send_goal(-4.7, -9.0, 0.0)  # goal coordinates
-    rclpy.spin(go_to_pose)
-    
+    signal.signal(signal.SIGINT, signal_handler)
+
+    # Send goal coordinates
+    go_to_pose.send_goal(-4.7, -9.0, 0.0)
+
+    try:
+        rclpy.spin(go_to_pose)  # Keep the node alive
+    except KeyboardInterrupt:
+        print("Shutting down...")
+
+    # Cleanup before exiting
     cv2.destroyAllWindows()
+    rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
