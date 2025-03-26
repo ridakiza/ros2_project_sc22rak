@@ -11,6 +11,8 @@ import numpy as np
 import threading
 import signal
 from geometry_msgs.msg import Twist
+import time
+from math import sin, cos, pi
 
 
 class GoToPose(Node):
@@ -25,14 +27,27 @@ class GoToPose(Node):
         self.sensitivity = 15
         self.subscription = self.create_subscription(Image,'camera/image_raw',self.callback,10)
         self.publisher = self.create_publisher(Twist, '/cmd_vel', 10)
-        
+
+        self.goals = [(7.0, 5.19, 0.0), (-10.8,3.6, 0.0), (-9.5, -14.7, 0.0), (9.0, -13.3, 0.0)]
+        self.current_goal_index = 0       
 
         self.closest_distance = float('inf') 
         self.moving = True
         self.obstacle_detected = False 
+        self.blue_detected = False 
+        self.moving_towards_blue = False
 
         cv2.namedWindow('Filtered Camera Feed', cv2.WINDOW_NORMAL)
         cv2.resizeWindow('Filtered Camera Feed', 320, 240)
+
+    def send_next_goal(self):
+        if not self.blue_detected:  # Only move to next goal if blue is not detected
+            if self.current_goal_index < len(self.goals):
+                x, y, yaw = self.goals[self.current_goal_index]
+                self.current_goal_index += 1
+                self.send_goal(x, y, yaw)
+            else:
+                self.get_logger().info("All goals reached.")
 
 
     def send_goal(self, x, y, yaw):
@@ -63,18 +78,89 @@ class GoToPose(Node):
         self.get_result_future.add_done_callback(self.get_result_callback)
 
     def get_result_callback(self, future):
+        """ Callback when a goal is completed. """
         result = future.result().result
         self.get_logger().info(f'Navigation result: {result}')
+        
+        # Rotate in place after reaching the goal
+        self.look_around()
+
+        # Move to the next goal
+        self.send_next_goal()
 
     def feedback_callback(self, feedback_msg):
         feedback = feedback_msg.feedback
+        # # Access the current pose
+        # current_pose = feedback_msg.feedback.current_pose
+        # position = current_pose.pose.position
+        # orientation = current_pose.pose.orientation
+
+        # # Access other feedback fields
+        # navigation_time = feedback_msg.feedback.navigation_time
+        # distance_remaining = feedback_msg.feedback.distance_remaining
+
+        # # Print or process the feedback data
+        # self.get_logger().info(f'Current Pose: [x: {position.x}, y: {position.y}, z: {position.z}]')
+        # self.get_logger().info(f'Distance Remaining: {distance_remaining}')
+
 
     def stop(self):
         twist = Twist()
         twist.linear.x = 0.0
         twist.angular.z = 0.0
         self.publisher.publish(twist)
- 
+
+    def move_forward(self, speed=0.2):
+        """ Moves the robot forward at a specified speed. """
+        twist = Twist()  # Create a new Twist message
+        twist.linear.x = speed
+        twist.angular.z = 0.0
+        self.publisher.publish(twist)
+    
+    def look_around(self):
+        """ Rotates the robot 360 degrees in place. """
+        self.get_logger().info("Looking around...")
+
+        twist = Twist()
+        twist.angular.z = pi / 4  # Rotate at 45 degrees/sec
+
+        # Rotate for 8 seconds to complete 360 degrees
+        start_time = time.time()
+        while time.time() - start_time < 8:
+            self.publisher.publish(twist)
+            time.sleep(0.1)
+
+        # Stop rotation
+        twist.angular.z = 0.0
+        self.publisher.publish(twist)
+        self.get_logger().info("Finished looking around.")
+
+    def move_towards_blue(self, x_offset):
+        """
+        Move towards the detected blue object.
+        Adjusts based on the position of the object in the camera frame.
+        """
+        twist = Twist()
+
+        # Move forward
+        twist.linear.x = 0.2
+
+        # Adjust direction based on x_offset
+        if x_offset < -20:
+            twist.angular.z = 0.1  # Turn left
+        elif x_offset > 20:
+            twist.angular.z = -0.1  # Turn right
+        else:
+            twist.angular.z = 0.0  # Move straight
+
+        self.publisher.publish(twist)
+
+
+    def stop_moving_towards_blue(self):
+        """ Stop the robot from moving towards blue and allow it to proceed to the next goal. """
+        self.moving_towards_blue = False
+        self.get_logger().info("Stopped moving towards blue object.")
+
     def callback(self, data):
         try:
             self.cv_image = self.bridge.imgmsg_to_cv2(data, "bgr8")
@@ -110,14 +196,17 @@ class GoToPose(Node):
             # Process contours and check if a marker is found
             def process_contours(mask, color_name):
                 contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                
                 if contours:
                     c = max(contours, key=cv2.contourArea)
                     area = cv2.contourArea(c)
                     if area > 100:  # Only consider significant areas
-                        # print(f"{color_name.capitalize()} color detected!")
-                        return True
-                return False
+                        M = cv2.moments(c)
+                        if M["m00"] != 0:
+                            cx = int(M["m10"] / M["m00"])  # X position of object in camera view
+                            img_center_x = self.cv_image.shape[1] // 2
+                            x_offset = cx - img_center_x  # Offset from center
+                            return x_offset
+                return None
 
             found_red = process_contours(red_mask, "red")
             found_green = process_contours(green_mask, "green")
@@ -127,20 +216,23 @@ class GoToPose(Node):
                 print("Red detected")
             if found_green:
                 print("Green detected")
+
             if found_blue:
-                print("Blue detected")
+                self.get_logger().info("Blue detected!")
+                self.blue_detected = True  # Set the flag to True
 
-    
-                blue_contours, _ = cv2.findContours(blue_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                # Ensure the x, y positions are float values
+                x = float(self.cv_image.shape[1] // 2)  # Convert to float
+                y = float(self.cv_image.shape[0] // 2)  # Convert to float
+                self.send_goal(x, y, 0.0)  # Set goal to the center of the image (assuming blue is center)
+                
+                self.move_towards_blue(found_blue)
 
-                if blue_contours:
-                    largest_blue_area = cv2.contourArea(max(blue_contours, key=cv2.contourArea))
-
-                    if largest_blue_area > 100:  
-                        print("Blue object is almost 1 meter close.")
-                        self.stop()
-                        self.moving = False  
-                        return
+            else:
+                if self.blue_detected:  # Only stop if we were moving towards blue
+                    self.stop_moving_towards_blue()
+                    self.blue_detected = False
+                    self.send_next_goal()
 
             # Display 
             cv2.resizeWindow('Filtered Camera Feed', 320, 240)
@@ -157,16 +249,17 @@ def main(args=None):
 
     rclpy.init(args=args)
     go_to_pose = GoToPose()
+    go_to_pose.send_next_goal()
 
     signal.signal(signal.SIGINT, signal_handler)
 
     # Send goal coordinates
-    go_to_pose.send_goal(-4.7, -9.0, 0.0)
+    # go_to_pose.send_goal(-4.7, -9.0, 0.0)
 
     try:
         rclpy.spin(go_to_pose)  # Keep the node alive
     except KeyboardInterrupt:
-        print("Shutting down...")
+        print("Shutting down")
 
     # Cleanup before exiting
     cv2.destroyAllWindows()
