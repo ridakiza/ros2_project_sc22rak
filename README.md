@@ -8,7 +8,10 @@ Before running any commands, ensure you are inside the **Singularity shell**.
 cd ~robotics/ros2_ws
 
 ```
+```python
+source ~/.bashrc
 
+```
 for the Gazebo interface 
 ```python
 ros2 launch turtlebot3_gazebo turtlebot3_task_world_2025.launch.py
