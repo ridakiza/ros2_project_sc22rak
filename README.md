@@ -27,6 +27,6 @@ ros2 launch turtlebot3_navigation2 navigation2.launch.py use_sim_time:=True map:
 
 then for the script 
 ```python
-ros2 run ros2_project_sc22rak first_step
+ros2 run ros2_project_sc22rak ros2_project_sc22rak
 
 ```
